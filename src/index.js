@@ -1,5 +1,6 @@
 const express = require("express");
 const app = express();
+const path = require("path");
 const cors = require("cors");
 const { recordCounter, getTotalRecord } = require("./service/recordCounter");
 const { createBulkScheduleService, getListSchedule } = require("./service/scheduleServices");
@@ -7,16 +8,23 @@ const { sendSmsSetMessageId } = require("./cron");
 const { sequelize } = require("./models");
 const { validateNewScheduleInput } = require("./helper/validation");
 const { recheckStatus } = require("./cron/index");
-const path = require("path");
 const { validateDate } = require("./service/dateService");
+const compression = require("compression");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
+
 app.use(express.json());
 app.use(cors());
+app.use(compression());
 
 // Database Connection
-sequelize.authenticate().then(() => {
-  console.log("Database Connected");
-});
+sequelize
+  .authenticate()
+  .then(() => {
+    console.log("Database Connected");
+  })
+  .catch((err) => {
+    console.log("Failed Connect to Database", err);
+  });
 
 // start cron that runs every minute to update the status until it become 'DELIVRD'
 recheckStatus(process.env.URL_SEND);
