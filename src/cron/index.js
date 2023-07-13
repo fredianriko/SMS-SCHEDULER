@@ -1,7 +1,7 @@
 const cron = require("node-cron");
 const { scheduled_messages: ScheduleModel, record_counter: RecordCounter } = require("../models");
 const { Op } = require("sequelize");
-const { formatTime } = require("../service/dateService");
+const { formatTimeForCron } = require("../service/dateService");
 const { sendSMS } = require("../service/scheduleServices");
 
 //called on api trigger
@@ -28,7 +28,7 @@ const sendSmsSetMessageId = async () => {
 
     //fetch post request to http://kr8tif.lawaapp.com:1338/ and get messageId for each phone
     dataOnly.forEach(async (data) => {
-      const cronTime = await formatTime(data.delivery_time);
+      const cronTime = await formatTimeForCron(data.delivery_time);
 
       //create cron that scheduling each data from getLimitedData
       const sendSmsUpdateMessageId = cron.schedule(cronTime, async () => {
@@ -116,8 +116,8 @@ const sendSmsSetMessageId = async () => {
 };
 
 const recheckStatus = (url) => {
-  const recheckStatusCron = cron.schedule("* * * * * *", async () => {
-    // batching
+  const recheckStatusCron = cron.schedule("* * * * *", async () => {
+    // checking status on batch size
     const getTotal = await ScheduleModel.count({
       where: {
         delivery_status: {
@@ -145,12 +145,13 @@ const recheckStatus = (url) => {
 
         const dataShedule = getSchedule.map((item) => item.dataValues);
 
-        // send sms and set message each data
+        // loop over != DELIVRD data, resend sms and set new status
+        let response;
         for (const scheduledMessage of dataShedule) {
-          const response = await sendSMS(scheduledMessage, url);
+          response = await sendSMS(scheduledMessage, url);
         }
 
-        console.log("Success update message to DELIVRD");
+        console.log("Success update message to DELIVRD", response);
       } catch (error) {
         console.error("Failed to fetch scheduled messages:", error);
       }

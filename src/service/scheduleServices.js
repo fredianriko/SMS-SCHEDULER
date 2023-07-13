@@ -1,12 +1,13 @@
 const { Op } = require("sequelize");
 const { scheduled_messages: ScheduleModel } = require("../models");
+const { formatDateTimeToNomal } = require("./dateService");
 
 const createBulkScheduleService = async (schedule) => {
   const recordsWithScheduled = schedule.map((record) => ({ ...record, scheduled: true }));
   return await ScheduleModel.bulkCreate(recordsWithScheduled);
 };
 
-async function sendSMS(data, url) {
+const sendSMS = async (data, url) => {
   try {
     //resend message to get new message id
     const response = await fetch(url, {
@@ -68,6 +69,51 @@ async function sendSMS(data, url) {
     console.error("Failed to send SMS:", error);
     throw error;
   }
-}
+};
 
-module.exports = { createBulkScheduleService, sendSMS };
+const getListSchedule = async (parameter) => {
+  const limit = parseInt(parameter.limit);
+  const dateStart = parameter.dateStart;
+  const dateEnd = parameter.dateEnd;
+
+  //query to get list schedule that being scheduled to send between dateStart and dateEnd
+
+  //id, phoneNumber, message,delivery_time
+  const getSMSList = await ScheduleModel.findAll({
+    where: {
+      delivery_time: {
+        [Op.between]: [dateStart, dateEnd],
+      },
+    },
+    order: [["delivery_time", "ASC"]],
+    limit: limit,
+  });
+  const mappedSMS = getSMSList.map((item) => item.dataValues);
+
+  return mappedSMS;
+};
+
+const getListSMS = async (parameter) => {
+  const limit = parseInt(parameter.limit);
+  const dateStart = parameter.dateStart;
+  const dateEnd = parameter.dateEnd;
+
+  //query to get list schedule that being scheduled to send between dateStart and dateEnd
+
+  //id, phoneNumber, message,delivery_time
+  const getScheduleList = await ScheduleModel.findAll({
+    attributes: ["id", "phoneNumber", "message", "delivery_time"],
+    where: {
+      delivery_time: {
+        [Op.between]: [dateStart, dateEnd],
+      },
+    },
+    order: [["delivery_time", "ASC"]],
+    limit: limit,
+  });
+  const mappedSchedule = getScheduleList.map((item) => item.dataValues);
+
+  return mappedSchedule;
+};
+
+module.exports = { createBulkScheduleService, sendSMS, getListSchedule, getListSMS };
