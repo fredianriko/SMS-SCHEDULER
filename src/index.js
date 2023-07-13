@@ -1,7 +1,6 @@
 const express = require("express");
 const app = express();
 const cors = require("cors");
-
 const { recordCounter, getTotalRecord } = require("./service/recordCounter");
 const { createBulkScheduleService, getListSchedule } = require("./service/scheduleServices");
 const { sendSmsSetMessageId } = require("./cron");
@@ -135,3 +134,14 @@ app.get("/getSMS", async (req, res) => {
 app.listen(3000, () => {
   console.log("Server listening on port 3000");
 });
+
+process.on("uncaughtException", (error) => {
+  console.log(error);
+});
+
+process.on("SIGINT", function () {
+  console.log("Shutting down from CTRL+C");
+  process.exit();
+});
+
+module.exports = app;

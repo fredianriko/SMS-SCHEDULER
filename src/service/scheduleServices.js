@@ -1,6 +1,5 @@
 const { Op } = require("sequelize");
 const { scheduled_messages: ScheduleModel } = require("../models");
-const { formatDateTimeToNomal } = require("./dateService");
 
 const createBulkScheduleService = async (schedule) => {
   const recordsWithScheduled = schedule.map((record) => ({ ...record, scheduled: true }));
