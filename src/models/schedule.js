@@ -9,12 +9,21 @@ module.exports = (sequelize, DataTypes) => {
       messageId: {
         type: DataTypes.STRING,
       },
-      status: {
-        type: DataTypes.STRING,
-      },
       message: {
         type: DataTypes.STRING,
       },
+      delivery_status: {
+        type: DataTypes.STRING,
+      },
+      scheduled: {
+        type: DataTypes.BOOLEAN,
+      },
+      delivery_time: {
+        type: DataTypes.STRING,
+      },
+      delivered: {
+        type: DataTypes.BOOLEAN
+      }
     },
     {
       freezeTableName: true,

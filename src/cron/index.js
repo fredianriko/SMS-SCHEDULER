@@ -1,77 +1,162 @@
 const cron = require("node-cron");
-const { schedule_message: ScheduleModel } = require("../models");
+const { scheduled_messages: ScheduleModel, record_counter: RecordCounter } = require("../models");
+const { Op } = require("sequelize");
+const { formatTime } = require("../service/dateService");
+const { sendSMS } = require("../service/scheduleServices");
 
-// run once a day at 12 AM
-// const counterCron = cron.schedule("*/5 * * * *", () => {});
+//called on api trigger
+const sendSmsSetMessageId = async () => {
+  const getTotal = await RecordCounter.findByPk(1);
+  let offset = 0;
+  let limit = 3; // can be change depends on demand
+  const totalPage = getTotal.dataValues.total_record;
 
-// testing 5 second
-// run every 5 minute,
-//triggered on initial server run , restart and by updateStatusToDelivrd cron
-// const sendSmsSetMessageId = cron.schedule("*/5 * * * * *", async () => {
-//   const messageSend = "Hellow";
+  // batch operation
+  while (offset <= totalPage) {
+    //get data with limit
+    const getLimitedData = await ScheduleModel.findAll({
+      where: {
+        messageId: {
+          [Op.or]: ["", null],
+        },
+        delivery_status: null,
+      },
+      limit: limit,
+      offset: offset,
+    });
+    const dataOnly = getLimitedData.map((item) => item.dataValues);
 
-//   // solution for data scalling
-//   // Number of phone numbers to process in each batch
-//   const batchSize = 2;
-//   const recordCounter = await RecordCounter.findByPk(1);
-//   const totalRecord = recordCounter.total_record;
-//   let offset = 0;
+    //fetch post request to http://kr8tif.lawaapp.com:1338/ and get messageId for each phone
+    dataOnly.forEach(async (data) => {
+      const cronTime = await formatTime(data.delivery_time);
 
-//   while (offset <= totalRecord) {
-//     // get all number only where status null or delivered
-//     const getSchedule = await ScheduleModel.findAll({
-//       attributes: ["phoneNumber"],
-//       offset,
-//       limit: batchSize,
-//     });
+      //create cron that scheduling each data from getLimitedData
+      const sendSmsUpdateMessageId = cron.schedule(cronTime, async () => {
+        try {
+          // send sms based on schedule
+          const sendSms = await fetch("http://kr8tif.lawaapp.com:1338/api", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              dnis: data.phoneNumber.toString(),
+              message: data.message,
+            }),
+          });
 
-//     const phonesString = getSchedule
-//       .map((result) => result.dataValues)
-//       .map((obj) => obj.phoneNumber)
-//       .join(",");
+          const messageIdReturned = await sendSms.json();
 
-//     // send message to http://kr8tif.lawaapp.com:1338/api for every number
-//     const sendSms = await fetch("http://kr8tif.lawaapp.com:1338/api", {
-//       method: "POST",
-//       headers: {
-//         "Content-Type": "application/json",
-//       },
-//       body: JSON.stringify({
-//         dnis: phonesString,
-//         message: messageSend,
-//       }),
-//     })
-//       .then((response) => {
-//         const raw = response.json();
-//         return raw;
-//       })
-//       .catch((error) => {
-//         console.error("Error:", error);
-//       });
+          //initial set messageId
+          const setMessageId = await ScheduleModel.update(
+            {
+              messageId: messageIdReturned.message_id,
+              scheduled: 1,
+            },
+            {
+              where: {
+                phoneNumber: data.phoneNumber,
+                messageId: { [Op.or]: ["", null] },
+              },
+            }
+          );
+          console.log("Success set initial messageId", setMessageId);
 
-//     //update messageId field where phoneNumber is current phoneNumber
-//     for (let i = 0; i < sendSms.length; i++) {
-//       const item = sendSms[i];
-//       await ScheduleModel.update({ messageId: item.message_id }, { where: { phoneNumber: item.dnis } });
-//     }
+          // get data again where delivery_status empty or null
+          const getDataDeliveryStatus = await ScheduleModel.findAll({
+            where: {
+              delivery_status: {
+                [Op.or]: ["", null],
+              },
+            },
+          });
 
-//     // increase the offset here
-//     offset += batchSize;
-//   }
+          // Set initial delivery status from messageId
+          const undeliverdData = getDataDeliveryStatus.map((item) => item.dataValues);
+          for (const data of undeliverdData) {
+            try {
+              const checkStatus = await fetch(`http://kr8tif.lawaapp.com:1338/api?messageId=${data.messageId}`)
+                .then((response) => response.json())
+                .catch((err) => err);
 
-//   // start second cron
-//   res.send("messageId updated");
-// });
+              await ScheduleModel.update(
+                {
+                  delivery_status: checkStatus.status,
+                  delivery_time: checkStatus.delivery_time,
+                  delivered: 1,
+                },
+                {
+                  where: {
+                    delivery_status: {
+                      [Op.or]: ["", null],
+                    },
+                    messageId: data.messageId,
+                  },
+                }
+              );
 
-// run when triggered by first cron,
-//and runs every 5 minute,
-//stops when all phone number have messageId
-const setMessageId = cron.schedule();
+              console.log("Update completed for messageId:", data.messageId);
+            } catch (error) {
+              console.error("Error updating for messageId:", data.messageId, error);
+            }
+          }
+        } catch (error) {
+          console.error("Error setting initial messageId for phoneNumber:", data.phoneNumber, error);
+        }
+      });
 
-// run when triggered by second cron,
-// runs every 5 minute,
-// stops when all status are 'DELIVRD',
-// triggered firstCron to run
-const updateStatusToDelivrd = cron.schedule();
+      // start the cron
+      sendSmsUpdateMessageId.start();
+      console.log("Success: Set Schedule for phoneNumber:", data.phoneNumber);
+    });
 
-module.exports = { counterCron, sendSmsSetMessageId, setMessageId, updateStatusToDelivrd };
+    offset += limit;
+  }
+  return 1;
+};
+
+const recheckStatus = (url) => {
+  const recheckStatusCron = cron.schedule("* * * * * *", async () => {
+    // batching
+    const getTotal = await ScheduleModel.count({
+      where: {
+        delivery_status: {
+          [Op.ne]: "DELIVRD",
+        },
+      },
+    });
+    let limit = 3; // can be change depends on demand
+
+    while (getTotal != 0) {
+      try {
+        // Get all data where delivery_status is not 'DELIVRD'
+        const getSchedule = await ScheduleModel.findAll({
+          where: {
+            delivery_status: {
+              [Op.not]: "DELIVRD",
+            },
+            messageId: {
+              [Op.not]: "",
+              [Op.not]: null,
+            },
+          },
+          limit: limit,
+        });
+
+        const dataShedule = getSchedule.map((item) => item.dataValues);
+
+        // send sms and set message each data
+        for (const scheduledMessage of dataShedule) {
+          const response = await sendSMS(scheduledMessage, url);
+        }
+
+        console.log("Success update message to DELIVRD");
+      } catch (error) {
+        console.error("Failed to fetch scheduled messages:", error);
+      }
+    }
+  });
+  recheckStatusCron.start();
+};
+
+module.exports = { sendSmsSetMessageId, recheckStatus };
